@@ -19,6 +19,7 @@ Server::Server()
 	}
 
 	updateDone = CreateEvent(nullptr, true, false, nullptr);
+
 }
 
 Server::~Server()
@@ -120,6 +121,7 @@ void Server::CheckCollision()
 				{
 					iPlayer->m_nHp -= missile->damage;
 					missile->ShouldDeactive();
+					trashCan.push(missile);
 					if (iPlayer->m_nHp <= 0)
 					{
 						iPlayer->Reset(i);
@@ -139,99 +141,7 @@ void Server::CheckCollision()
 				if (iPlayer->m_nHp > iPlayer->maxHp)			iPlayer->m_nHp = iPlayer->maxHp;
 
 				m_ItemObject[j]->ShouldDeactive();
-			}
-		}
-	}
-}
-
-void Server::SendAllClient()
-{
-	for (int i = 0; i < MAX_CLIENT_NUM; ++i)		// client number
-	{
-		if (!clients[i]->IsConnected())
-		{
-			continue;
-		}
-
-		PlayerInfoBundlePacket scInfo;
-
-		Client* client = clients[i];
-		CPlayer* player = client->m_player;
-		int playerNumber = client->GetPlayerNumber();
-		scInfo.serverTimestampMs = GetTimestampMs();
-		XMFLOAT3 position{ player->m_fxPos, player->m_fyPos, player->m_fzPos };
-
-		// PlayerInfo
-		scInfo.packetType = SC_PlayerInfo;
-		scInfo[i].playerNumber = playerNumber;
-		scInfo[i].playerHP = player->m_nHp;
-		scInfo[i].position = position;
-		scInfo[i].rotation = XMFLOAT3(player->m_fPitch, player->m_fYaw, player->m_fRoll);
-
-		if ((scInfo[i].playerActive = !client->ShouldDisconnected()) == false)
-		{
-			client->Disconnect();			// disconnect
-		}
-
-		// send client[i] info to all clients
-		for (const auto& client : clients)
-		{
-			if (!client->IsConnected())
-			{
-				continue;
-			}
-			send(client->sock, (char*)&scInfo, sizeof(PlayerInfoBundlePacket), 0);
-
-			for (int i = 0; i < player->maxMissileNum; ++i)
-			{
-				CMissileObject* missile = player->m_pMissiles[i];
-				if (!missile->IsActive())
-				{
-					continue;
-				}
-
-				MissileInfoPacket scMissile;
-				scMissile.packetType = SC_MissileInfo;
-				scMissile.playerNumber = playerNumber;
-				scMissile.missileNumber = i;
-				if (missile->shouldDeactivated)
-				{
-					trashCan.push(missile);
-					scMissile.active = false;
-				}
-				else
-				{
-					scMissile.active = true;
-				}
-
-				scMissile.position = XMFLOAT3(missile->m_fxPos, missile->m_fyPos, missile->m_fzPos);
-				scMissile.rotation = XMFLOAT3(missile->m_fPitch, missile->m_fYaw, missile->m_fRoll);
-				send(client->sock, (char*)&scMissile, sizeof(MissileInfoPacket), 0);
-			}
-
-			//sending ItemInfo Packet
-			for (int i = 0; i < MAX_ITEM_NUM; ++i)
-			{
-				CItemObject* item = m_ItemObject[i];
-				if (!item->IsActive())
-				{
-					continue;
-				}
-
-				ItemInfoPacket scItem;
-				scItem.packetType = SC_ItemInfo;
-				if (item->shouldDeactivated)
-				{
-					trashCan.push(item);
-					scItem.active = false;
-				}
-				else
-				{
-					scItem.active = true;
-				}
-				scItem.itemNum = i;
-				scItem.position = item->GetCurPos();
-				send(client->sock, (char*)&scItem, sizeof(ItemInfoPacket), 0);
+				trashCan.push(m_ItemObject[j]);
 			}
 		}
 	}
@@ -244,6 +154,7 @@ void Server::Update()
 	std::chrono::steady_clock::time_point curTime = std::chrono::steady_clock::now();
 	for (int i = 0; i < MAX_CLIENT_NUM; ++i)
 	{
+		clients[i]->keyPacket_q.try_pop(clients[i]->m_player->keyPacket);
 		// connected, but dead
 		if (clients[i]->IsConnected() && !clients[i]->m_player->IsActive())
 		{
@@ -259,11 +170,7 @@ void Server::Update()
 			clients[i]->m_player->Update(elapsedTime, g_server->connectedClients);
 		}
 	}
-
-	SetEvent(updateDone);
-
 	CheckCollision();
-	SendAllClient();
 
 	itemSpawnTime += elapsedTime;
 	if (itemSpawnTime > itemRespawnTime)
@@ -278,6 +185,9 @@ void Server::Update()
 		trashCan.front()->Deactivate();
 		trashCan.pop();
 	}
+
+	PreparePackets();
+	SetEvent(updateDone);
 }
 
 void Server::SpawnItem()
@@ -296,11 +206,59 @@ void Server::SpawnItem()
 	}
 }
 
+void Server::PreparePackets()
+{
+	PlayerInfoBundlePacket playerBundle;
+	MissileInfoBundlePacket missileBundle;
+	ItemInfoBundlePacket itemBundle;
+	playerBundle.packetType = SC_PlayerInfo;
+	missileBundle.packetType = SC_MissileInfo;
+	itemBundle.packetType = SC_ItemInfo;
+	for (int clientNum =0; clientNum < MAX_CLIENT_NUM;++clientNum)
+	{
+		Client* client = clients[clientNum];
+		CPlayer* player = client->m_player;
+		playerBundle.playerInfos[clientNum] = { clientNum, player->m_nHp, player->GetCurPos(), player->GetCurRot(), player->IsActive()};
+		for (int i =0; i < player->maxMissileNum; ++i)
+		{
+			CMissileObject* missile = player->m_pMissiles[i];
+			MissileInfoPacket& missileInfo = missileBundle.missileInfos[clientNum * player->maxMissileNum + i];
+			ConvertFloat3toInt16(missile->GetCurPos(), missileInfo.positionX, missileInfo.positionY, missileInfo.positionZ,MAP_SCALE);
+			missileInfo.active = missile->IsActive();
+		}
+	}
+	playerBundlePacket_q.push(playerBundle);
+	missileBundlePacket_q.push(missileBundle);
+
+	for (int i=0;i<MAX_ITEM_NUM;++i)
+	{
+		CItemObject* item = m_ItemObject[i];
+		ItemInfoPacket& itemInfo = itemBundle.itemInfos[i];
+		ConvertFloat3toInt16(item->GetCurPos(), itemInfo.positionX, itemInfo.positionY, itemInfo.positionZ, MAP_SCALE);
+		itemInfo.active = item->IsActive();
+	}
+	itemBundlePacket_q.push(itemBundle);
+}
+
 uint32_t Server::GetTimestampMs()
 {
 	using namespace std::chrono;
 	return (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>
 		(steady_clock::now().time_since_epoch()).count();
+}
+
+
+void Server::SendPacketAllClient(char* packet, int size, int flag)
+{
+	// send client[i] info to all clients
+	for (const auto& client : clients)
+	{
+		if (!client->IsConnected())
+		{
+			continue;
+		}
+		send(client->sock, packet, size, flag);
+	}
 }
 
 
@@ -327,10 +285,11 @@ DWORD WINAPI AcceptClient(LPVOID arg)
 		for (int i = 0; i < MAX_CLIENT_NUM; ++i)
 		{
 			Client* client = g_server->clients[i];
+			client->SetPlayerNumber(i);
+
 			if (!client->IsConnected())
 			{
 				client->sock = clientSock;
-				client->SetPlayerNumber(i);
 
 				std::cout << "Client accepted in " << client->GetPlayerNumber() << std::endl;
 				HANDLE receiver = CreateThread(NULL, 0, ReceiveFromClient, client, 0, NULL);
@@ -356,13 +315,14 @@ DWORD WINAPI ReceiveFromClient(LPVOID arg)
 
 	CPlayer* p = client->m_player;
 	p->SetActive(true);
-	p->SetPosition(p->initialPos[playerNumber].x, p->initialPos[playerNumber].y, p->initialPos[playerNumber].z);
-	p->m_fPitch = p->initialRot[playerNumber].x; p->m_fYaw = p->initialRot[playerNumber].y; p->m_fRoll = p->initialRot[playerNumber].z;
+	XMFLOAT3& initialPosition = p->initialPos[playerNumber];
+	XMFLOAT3& initialRotation = p->initialRot[playerNumber];
+	p->SetPosition(initialPosition.x, initialPosition.y, initialPosition.z);
+	p->Rotate(initialRotation.x, initialRotation.y, initialRotation.z);
 
 	client->Connected();
 	++g_server->connectedClients;
-
-	PlayerKeyPacket keyPacket;
+	PlayerKeyPacket& keyPacket = g_server->keyPackets[playerNumber];
 	while (true)
 	{
 		WaitForSingleObject(g_server->updateDone, INFINITE);
@@ -374,13 +334,44 @@ DWORD WINAPI ReceiveFromClient(LPVOID arg)
 			break;
 		}
 		CPlayer* player = client->m_player;
-		player->playerKey = keyPacket.playerKeyInput;
-
-		player->m_deltaX = keyPacket.deltaMouse.x;
-		player->m_deltaY = keyPacket.deltaMouse.y;
+		client->keyPacket_q.push(keyPacket);
 	}
 
 	return 0;
+}
+
+DWORD WINAPI SendAllClient(LPVOID arg)
+{
+	while (1)
+	{
+		PlayerInfoBundlePacket scInfoBundle;
+		MissileInfoBundlePacket msInfoBundle;
+		ItemInfoBundlePacket ItemInfoBundle;
+		if (g_server->playerBundlePacket_q.try_pop(scInfoBundle))
+		{
+			g_server->SendPacketAllClient((char*)&scInfoBundle, sizeof(PlayerInfoBundlePacket), 0);
+		}
+		else
+		{
+			//Didnt prepare Packet Wait event
+			WaitForSingleObject(g_server->updateDone, INFINITE);
+			continue;
+		}
+
+		if (g_server->missileBundlePacket_q.try_pop(msInfoBundle))
+		{
+			g_server->SendPacketAllClient((char*)&msInfoBundle, sizeof(MissileInfoBundlePacket), 0);
+
+		}
+
+		//sending ItemInfo Packet
+		if (g_server->itemBundlePacket_q.try_pop(ItemInfoBundle))
+		{
+			g_server->SendPacketAllClient((char*)&ItemInfoBundle, sizeof(ItemInfoBundlePacket), 0);
+
+		}
+		ResetEvent(g_server->updateDone);
+	}
 }
 
 void Client::Reset()
@@ -389,7 +380,8 @@ void Client::Reset()
 	sock = NULL;
 
 	shouldDisconnected = true;
-
+	keyPacket_q.clear();
+	Disconnect();
 	m_player->Reset(GetPlayerNumber());
 }
 
@@ -399,13 +391,20 @@ int main()
 	g_server->OpenListenSocket();
 
 	srand(time(NULL));
-
 	HANDLE acceptThread = CreateThread(NULL, 0, AcceptClient, nullptr, 0, NULL);
+	CreateThread(NULL, 0, SendAllClient, g_server, 0, NULL);
+
 	while (true)
 	{
+		if (g_server->connectedClients < 1) continue;
 		g_server->elapsedTime = g_server->timer.GetTimePassedFromLastUpdate();
-		g_server->timer.Record();
-		g_server->Update();
+		if (g_server->elapsedTime >= g_server->FIXED_DELTA_TIME)
+		{
+			g_server->timer.Record();
+			g_server->Update();
+			//g_server->SendAllClient();
+			g_server->elapsedTime = g_server->FIXED_DELTA_TIME;
+		}
 	}
 }
 

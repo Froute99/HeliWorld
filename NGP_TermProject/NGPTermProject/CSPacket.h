@@ -6,6 +6,7 @@ namespace PACKET {
 	const char PlayerInfo = 0;
 	const char ItemInfo = 1;
 	const char MissileInfo = 2;
+	const char KeyInfo = 3;
 };
 
 
@@ -28,28 +29,42 @@ struct PlayerInfoBundlePacket
 {
 	char packetType;
 	PlayerInfoPacket playerInfos[4];
-	uint32_t serverTimestampMs;
 };
 
+
 struct PlayerKeyPacket {
-	char playerKeyInput;
+	char packetType;
+	unsigned char playerKeyInput;
 	FPoint deltaMouse;
+	int16_t launchedMissileNum = -1;
 };
 
 struct ItemInfoPacket {
-	char packetType;
-	int itemNum;
-	XMFLOAT3 position;
+	int16_t positionX;
+	int16_t positionY;
+	int16_t positionZ;
 	bool active;
 };
 
-struct MissileInfoPacket {
+struct ItemInfoBundlePacket
+{
 	char packetType;
-	int playerNumber;		
-	int missileNumber;
-	bool active = false;
-	XMFLOAT3 position;
-	XMFLOAT3 rotation;
+	ItemInfoPacket itemInfos[10];
 };
+
+struct MissileInfoPacket {
+
+	bool active;
+	int16_t positionX;  
+	int16_t positionY; 
+	int16_t positionZ; 
+};
+
+struct MissileInfoBundlePacket
+{
+	char packetType;
+	MissileInfoPacket missileInfos[32];
+};
+
 #pragma pack()
 

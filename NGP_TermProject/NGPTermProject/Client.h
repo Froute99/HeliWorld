@@ -1,6 +1,5 @@
 #pragma once
 
-
 #define _CRT_SECURE_NO_WARNINGS
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
@@ -40,6 +39,8 @@ public:
 	void KeyUpHandler(HWND hWnd, UINT nMessageID, WPARAM wParam, LPARAM lParam);
 	void SendtoServer();
 
+	uint32_t GetTimestampMs();
+
 	PlayerInfoPacket playerData[4];
 	MissileInfoPacket missilePacket[32];
 	ItemInfoPacket itemPacket[10];
@@ -53,23 +54,14 @@ public:
 	int remainOffset = 0;
 	int remainSize = 0;
 
-	//Interpolation
-
-	uint32_t GetTimestampMs();
-
-	static std::chrono::steady_clock::time_point receiveTimePrev;
-	static std::chrono::steady_clock::time_point receiveTimeCur;
-	uint32_t lastServerTimestamp = 0;
-	const int delay = 200;
-
-	deque<PlayerInfoBundlePacket> recvPacketQueue;
+	int16_t lastLaunchedMissileNum = -1;
+	unsigned char sendKey = NULL;
 
 private:
 	SOCKET* sock = nullptr;
 
-	char* serverIp = (char*)"172.30.1.7";
+	char* serverIp = (char*)"172.30.1.66";
 
-	unsigned char sendKey = NULL;
 	unsigned char option0 = 0x01;   // 0000 0001 
 	unsigned char option1 = 0x02;   // 0000 0010
 	unsigned char option2 = 0x04;   // 0000 0100

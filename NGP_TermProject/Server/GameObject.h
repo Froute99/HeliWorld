@@ -2,6 +2,7 @@
 #pragma warning(disable : 26495)
 
 #include "stdafx.h"
+#include "SCPacket.h"
 
 #define DIR_FORWARD				0x01
 #define DIR_BACKWARD			0x02
@@ -46,7 +47,8 @@ public:
 	void ShouldDeactive() { shouldDeactivated = true; }
 	void Deactivate() { m_bActive = false; shouldDeactivated = false; }
 
-	XMFLOAT3 GetCurPos() { return XMFLOAT3(m_fxPos, m_fyPos, m_fzPos); }
+	inline XMFLOAT3 GetCurPos() { return XMFLOAT3(m_fxPos, m_fyPos, m_fzPos); }
+	inline XMFLOAT3 GetCurRot() { return XMFLOAT3(m_fPitch, m_fYaw, m_fRoll); }
 
 	void Rotate(float Pitch, float Yaw, float Roll);
 	void SetPosition(float x, float y, float z);
@@ -79,21 +81,18 @@ public:
 
 	void Move(const XMFLOAT3& xmf3Shift);
 	void Rotate(float x, float y, float z);
-	void LaunchMissile();
+	void LaunchMissile(int16_t missileNum);
 	void UpdateMissiles(float elapsedTime);
 	void Update(float elapsedTime, int connectedClients);
 	void Reset(int playerNum);
 
-	const float movingSpeed = 2000.f;
+	const float movingSpeed = 200.f;
 
-	float m_deltaX = 0.f;
-	float m_deltaY = 0.f;
+	PlayerKeyPacket keyPacket;
 
-	unsigned char playerKey = 0;
+	XMFLOAT3 initialPos[4]{ {100,400,100},{900, 400, 900},{900.0f, 400.0f, 100.0f},{100.0f, 400.0f, 900.0f} };
 
-	XMFLOAT3 initialPos[4]{ {100,400,500},{500,400,100},{900,400,500},{500,400,900} };
-
-	XMFLOAT3 initialRot[4]{ {0,90,0},{0,0,0},{0,-90,0},{0,180,0} };
+	XMFLOAT3 initialRot[4]{ {0,90,0},{0,90,0},{0,90,0},{0,90,0} };
 
 private:
 	// Key bindings
@@ -117,10 +116,11 @@ class CMissileObject : public GameObject
 public:
 	int m_playerNumber = 0;
 	int damage = 10;
-	const float movingSpeed = 800.f;
+	const float movingSpeed = 300.f;
+	bool bMustKill = false;
 
 	float m_fLifeSpan = 6.f;
-
+	
 	void Move(float elapsedTime);
 	void Reset();
 };

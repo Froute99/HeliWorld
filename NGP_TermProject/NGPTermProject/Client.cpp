@@ -1,9 +1,6 @@
 #include "stdafx.h"
 #include "Client.h"
 
-std::chrono::steady_clock::time_point Client::receiveTimeCur = {};
-std::chrono::steady_clock::time_point Client::receiveTimePrev = {};
-
 int PacketSizeHelper(char packetType)
 {
 	int packetSize;
@@ -13,10 +10,13 @@ int PacketSizeHelper(char packetType)
 		packetSize = sizeof(PlayerInfoBundlePacket);
 		break;
 	case PACKET::ItemInfo:
-		packetSize = sizeof(ItemInfoPacket);
+		packetSize = sizeof(ItemInfoBundlePacket);
 		break;
 	case PACKET::MissileInfo:
-		packetSize = sizeof(MissileInfoPacket);
+		packetSize = sizeof(MissileInfoBundlePacket);
+		break;
+	case PACKET::KeyInfo:
+		packetSize = sizeof(PlayerKeyPacket);
 		break;
 	default:
 		packetSize = -1;
@@ -33,21 +33,27 @@ void PacketProcessHelper(char packetType, char* fillTarget, Client* client)
 	{
 		PlayerInfoBundlePacket piPacket;
 		memcpy(&piPacket, fillTarget, sizeof(PlayerInfoBundlePacket));
-		client->recvPacketQueue.push_back(piPacket);
+		memcpy(&client->playerData, &piPacket.playerInfos, sizeof(PlayerInfoPacket) * 4);
 		break;
 	}
 	case PACKET::ItemInfo:
 	{
-		ItemInfoPacket itPacket;
-		memcpy(&itPacket, fillTarget, sizeof(ItemInfoPacket));
-		client->itemPacket[itPacket.itemNum] = itPacket;
+		ItemInfoBundlePacket itPacket;
+		memcpy(&itPacket, fillTarget, sizeof(ItemInfoBundlePacket));
+		memcpy(&client->itemPacket, itPacket.itemInfos, sizeof(ItemInfoPacket)*10);
 		break;
 	}
 	case PACKET::MissileInfo:
 	{
-		MissileInfoPacket miPacket;
-		memcpy(&miPacket, fillTarget, sizeof(MissileInfoPacket));
-		client->missilePacket[miPacket.playerNumber * 8 + miPacket.missileNumber] = miPacket;
+		MissileInfoBundlePacket miPacket;
+		memcpy(&miPacket, fillTarget, sizeof(MissileInfoBundlePacket));
+		memcpy(&client->missilePacket, miPacket.missileInfos, sizeof(MissileInfoPacket) * 32);
+		break;
+	}
+	case PACKET::KeyInfo:
+	{
+		PlayerKeyPacket pkPacket;
+		memcpy(&pkPacket, fillTarget, sizeof(PlayerKeyPacket));
 		break;
 	}
 	default:
@@ -71,18 +77,6 @@ Client::~Client()
 
 void Client::ConnectServer()
 {
-	std::ifstream in{ "ip.ini" };
-	if (!in.is_open())
-	{
-		std::ofstream out{ "ip.ini" };
-		out << "127.0.0.1";
-		out.close();
-	}
-
-	//std::string ip;
-	//in >> ip;
-	//strcpy(serverIp, ip.c_str());
-
 	if ((*sock = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)	err_quit("socket()");
 
 	sockaddr_in serverAddr;
@@ -158,14 +152,18 @@ void Client::KeyUpHandler(HWND hWnd, UINT nMessageID, WPARAM wParam, LPARAM lPar
 void Client::SendtoServer()
 {
 	PlayerKeyPacket cs_key;
+	cs_key.packetType = PACKET::KeyInfo;
 	cs_key.playerKeyInput = sendKey;
 	cs_key.deltaMouse = deltaMouse;
+	cs_key.launchedMissileNum = lastLaunchedMissileNum;
+	if(lastLaunchedMissileNum >=0) cout << lastLaunchedMissileNum << " ";
 	if (send(*sock, (char*)&cs_key, sizeof(PlayerKeyPacket), 0) == SOCKET_ERROR)
 	{
 		err_display("send()");
 		return;
 	}
 	sendKey &= (~option6);
+	lastLaunchedMissileNum = -1;
 }
 
 uint32_t Client::GetTimestampMs()
@@ -185,7 +183,6 @@ DWORD WINAPI ReceiveFromServer(LPVOID arg)
 	while (true)
 	{
 		const int frameTime = 17;		// 1000ms / 60frame	+ 1
-		//WaitForSingleObject(client->FrameAdvanced, (DWORD)frameTime);
 		if (recv(*sock, (char*)&buf, bufSize, MSG_WAITALL) == SOCKET_ERROR)		err_quit("recv()");
 
 		int restBufSize = bufSize;
